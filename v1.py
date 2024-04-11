@@ -265,6 +265,7 @@ def v1_request(self):
         remote_send_headers.update(
             {header: self.headers.get(header)}
         )
+    print(remote_send_headers)
 
     # Handle HTTP(S) requests
     if request_bare_protocol in ["http:", "https:"]:
