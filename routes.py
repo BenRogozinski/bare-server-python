@@ -11,20 +11,16 @@ logger = get_logger("BARE")
 process = psutil.Process()
 
 def root_request(self):
-    if self.command == "OPTIONS":
-        self.send_response(200)
-        self.end_headers()
-    else:
-        self.send_response(200)
-        self.send_header("Content-type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps({
-            "versions": server_info.server_versions,
-            "language": server_info.server_language,
-            "memoryUsage": round(process.memory_info().rss / 1024 / 1024, 2),
-            "maintainer": server_info.maintainer_data,
-            "project": server_info.project_data,
-        }, indent=4).encode())
+    self.send_response(200)
+    self.send_header("Content-type", "application/json")
+    self.end_headers()
+    self.wfile.write(json.dumps({
+        "versions": server_info.server_versions,
+        "language": server_info.server_language,
+        "memoryUsage": round(process.memory_info().rss / 1024 / 1024, 2),
+        "maintainer": server_info.maintainer_data,
+        "project": server_info.project_data,
+    }, indent=4).encode())
 
 routes = {
     "/": root_request,

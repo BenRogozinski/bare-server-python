@@ -78,6 +78,10 @@ def create_websocket_proxy(self, data):
     return False
 
 def v1_request(self):
+    if self.command == "OPTIONS":
+        self.send_response(200)
+        self.end_headers()
+        return
     # Handle websocket upgrade requests
     if self.headers.get("Upgrade") == "websocket":
         if self.headers.get("Sec-WebSocket-Protocol") != None:
