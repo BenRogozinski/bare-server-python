@@ -3,7 +3,12 @@ import json
 import http.client
 import validators
 import dns.resolver
-import select
+import ssl
+import random
+from logger import get_logger
+from urllib.parse import unquote
+
+websocket_logger = get_logger("WEBSOCKET")
 
 required_headers = [
     "X-Bare-Host",
@@ -13,7 +18,6 @@ required_headers = [
     "X-Bare-Headers",
     "X-Bare-Forward-Headers"
 ]
-
 forbidden_pass_headers = [
     "vary",
     "connection",
@@ -25,11 +29,6 @@ forbidden_pass_headers = [
     "access-control-request-headers",
     "access-control-request-method"
 ]
-
-valid_protocols = ["http:", "https:", "ws:", "wss:"]
-
-valid_ports = range(1,65536)
-
 global_headers = {
     "X-Robots-Tag": "noindex",
     "Access-Control-Allow-Headers": "*",
@@ -39,7 +38,90 @@ global_headers = {
     "Access-Control-Max-Age": "7200"
 }
 
+valid_http_protocols = ["http:", "https:"]
+
+valid_websocket_protocols = ["ws:", "wss:"]
+websocket_required_data = [
+    "remote",
+    "headers",
+    "forward_headers",
+]
+websocket_remote_required_data = [
+    "host",
+    "port",
+    "path",
+    "protocol"
+]
+
+valid_ports = range(1,65536)
+
+def validate_websocket_json(websocket_json):
+    for _ in websocket_required_data:
+        if _ not in websocket_json:
+            return False
+    for _ in websocket_remote_required_data:
+        if _ not in websocket_json["remote"]:
+            return False
+    if websocket_json["remote"]["protocol"] not in valid_websocket_protocols:
+        return False
+    return True
+
+def create_websocket_proxy(self, data):
+    websocket_uri = f"{data['remote']['protocol']}//{data['remote']['host']}:{data['remote']['port']}{data['remote']['path']}"
+    websocket_headers = data["headers"]
+    websocket_forwarded_headers = {}
+    for header in data["forward_headers"]:
+        websocket_forwarded_headers[header] = self.headers.get(header)
+    websocket_headers.update(websocket_forwarded_headers)
+    websocket_logger.debug(f"Opening tunnel to {websocket_uri}")
+
+    return False
+
 def v1_request(self):
+    # Handle websocket upgrade requests
+    if self.headers.get("Upgrade") == "websocket":
+        if self.headers.get("Sec-WebSocket-Protocol") != None:
+            websocket_protocol = self.headers.get("Sec-WebSocket-Protocol").replace(" ", "").split(",")
+            if websocket_protocol[0] == "bare":
+                try:
+                    websocket_data = json.loads(unquote(websocket_protocol[1]))
+                    print(validate_websocket_json(websocket_data))
+                    if not create_websocket_proxy(self, websocket_data):
+                        error_handler.return_error(self, 400, {
+                            "code": "WEBSOCKET_CONNECT_ERROR",
+                            "id": "response",
+                            "message": "Failed to open websocket connection to remote."
+                        })
+                        return
+                except json.decoder.JSONDecodeError:
+                    error_handler.return_error(self, 400, {
+                        "code": "INVALID_WEBSOCKET_HEADER",
+                        "id": "request.headers.Sec-WebSocket-Protocol",
+                        "message": "Websocket JSON data was formatted incorrectly."
+                    })
+                    return
+                except IndexError:
+                    error_handler.return_error(self, 400, {
+                        "code": "INVALID_WEBSOCKET_HEADER",
+                        "id": "request.headers.Sec-WebSocket-Protocol",
+                        "message": "Websocket JSON data was not specified"
+                    })
+                    return
+            else:
+                error_handler.return_error(self, 400, {
+                    "code": "INVALID_WEBSOCKET_HEADER",
+                    "id": "request.headers.Sec-WebSocket-Protocol",
+                    "message": "An invalid websocket protocol was specified."
+                })
+                return
+        else:
+            error_handler.return_error(self, 400, {
+                "code": "MISSING_WEBSOCKET_HEADER",
+                "id": "request.headers.Sec-WebSocket-Protocol",
+                "message": "Websocket upgrade was requested but no protocol was specified."
+            })
+            return
+
     # Check if required headers are present
     for header in required_headers:
         if self.headers.get(header) == None:
@@ -89,7 +171,7 @@ def v1_request(self):
         return
     
     # Get Bare protocol
-    if self.headers.get("X-Bare-Protocol") not in valid_protocols:
+    if self.headers.get("X-Bare-Protocol") not in valid_http_protocols:
         error_handler.return_error(self, 400, {
             "code": "INVALID_BARE_HEADER",
             "id": "bare.headers.X-Bare-Protocol",
@@ -184,9 +266,9 @@ def v1_request(self):
     if request_bare_protocol in ["http:", "https:"]:
         try:
             if request_bare_protocol == "https:":
-                remote_connection = http.client.HTTPSConnection(request_bare_host)
+                remote_connection = http.client.HTTPSConnection(request_bare_host, request_bare_port)
             else:
-                remote_connection = http.client.HTTPConnection(request_bare_host)
+                remote_connection = http.client.HTTPConnection(request_bare_host, request_bare_port)
             request_body = None
             if self.headers.get("Content-Length") != None:
                 request_body = self.rfile.read(int(self.headers.get("Content-Length")))
@@ -244,3 +326,17 @@ def v1_request(self):
                 "message": "Connection reset while connecting to remote."
             })
             return
+        except ssl.SSLError:
+            error_handler.return_error(self, 500, {
+                "code": "SSL_ERROR",
+                "id": "remote.SSLError",
+                "message": "SSL error while connecting to remote."
+            })
+
+def v1_new_websocket(self):
+    websocket_id = ''.join(random.choice('0123456789abcdef') for _ in range(32))
+    websocket_logger.debug(f"New websocket created with ID {websocket_id}")
+    self.send_response(200)
+    self.send_header("Content-Type", "text/plain")
+    self.end_headers()
+    self.wfile.write(websocket_id.encode())

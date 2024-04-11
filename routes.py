@@ -2,8 +2,11 @@ from http.server import BaseHTTPRequestHandler
 import psutil
 import server_info
 import error_handler
-from v1 import v1_request
+from v1 import *
 import json
+from logger import get_logger
+
+logger = get_logger("BARE")
 
 process = psutil.Process()
 
@@ -25,7 +28,8 @@ def root_request(self):
 
 routes = {
     "/": root_request,
-    "/v1/": v1_request
+    "/v1/": v1_request,
+    "/v1/ws-new-meta": v1_new_websocket
 }
 
 class BareHTTPRequestHandler(BaseHTTPRequestHandler):
@@ -55,3 +59,5 @@ class BareHTTPRequestHandler(BaseHTTPRequestHandler):
                 "message": "Not Found"
             })
             return
+    def log_message(self, format, *args):
+        logger.info(format, *args)
